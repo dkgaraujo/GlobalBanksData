@@ -327,42 +327,53 @@ slide_3_aug_jurisdiction_averages <- rbind(
   cbind(date_quarter = "2020Q2", slide_3_aug %>% filter(date_quarter == "2020Q2") %>% group_by(CNTRY_OF_RISK) %>% summarise(mean_qLLP_loans = round(mean(100 * qLLP_to_total_loans, na.rm = TRUE), 2)))) %>% 
   spread(key = CNTRY_OF_RISK, value = mean_qLLP_loans)
 
-# slide 4: LLPs and earnings ----------------------------------------------
+# slide 4: dispersion in provisioning practices ---------------------------
 
-slide_4 <- BankData %>% 
-            filter(date_quarter %in% c("2019Q4", "2020Q1", "2020Q2")) %>% 
-            select(date_quarter, Bank, GSIB, ACCOUNTING_STANDARD, CNTRY_OF_RISK, IS_PROV_FOR_LOAN_LOSS, IS_OPER_INC) 
-
-slide_4_plot <- slide_4 %>% 
-  ggplot(aes(x = log(IS_OPER_INC),
-             y = log(IS_PROV_FOR_LOAN_LOSS),
-             group = date_quarter,
-             color = date_quarter,
-             shape = GSIB)) +
-  geom_point() +
-  facet_grid("date_quarter" ~ ACCOUNTING_STANDARD) +
-  geom_smooth(method = "lm", fill = NA) +
-  labs(x = "Operating income",
-       y = "Loan loss provisions",
-       caption = "All values in log.")
-
-ggsave("slide 04.png", slide_4_plot)
-
-write.csv(slide_4, "slide 04.csv")
-
-# slide 5: dispersion in provisioning practices ---------------------------
-
-slide_5_plot <- BankData %>%
+slide_4_plot <- BankData %>%
   filter(substr(date_quarter, 1, 4) %in% c("2019", "2020")) %>% 
   ggplot(aes(x = 100 * qLLP_to_total_loans, color = substr(date_quarter, 1, 4), group = date_quarter)) +
-  geom_density(size = 1.5, alpha = 0.8, position = "identity", aes(linetype = substr(date_quarter, 5, 6))) +
+  geom_density(size = 1.5, alpha = 0.8, position = "identity", aes(linetype = substr(date_quarter, 5, 6)))+
+  theme(panel.background = element_rect(fill = "#d3d6d4"),
+        strip.background = element_rect(fill = "white"),
+        panel.grid.major = element_line(color = "#f2f2f2"),
+        strip.text.y = element_blank()) +
   scale_color_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
   scale_linetype_manual(values = c("solid", "longdash", "dashed", "dotted")) +
   labs(y = "Density",
        x = "Loan loss provisions as % of total loans",
        color = "Year",
        linetype = "Quarter")
+ggsave("slide 04.png", slide_4_plot)
+
+# slide 5: LLPs and earnings ----------------------------------------------
+
+slide_5 <- BankData %>% 
+            filter(date_quarter %in% c("2019Q4", "2020Q1", "2020Q2")) %>% 
+            select(date_quarter, Bank, GSIB, ACCOUNTING_STANDARD, CNTRY_OF_RISK, IS_PROV_FOR_LOAN_LOSS, IS_OPER_INC) 
+
+slide_5_plot <- slide_5 %>% 
+  ggplot(aes(x = log(IS_OPER_INC),
+             y = log(IS_PROV_FOR_LOAN_LOSS),
+             group = date_quarter,
+             color = date_quarter,
+             shape = GSIB)) +
+  geom_point() +
+  theme(panel.background = element_rect(fill = "#d3d6d4"),
+        strip.background = element_rect(fill = "white"),
+        panel.grid.major = element_line(color = "#f2f2f2"),
+        strip.text.y = element_blank()) +
+  scale_color_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  facet_grid("date_quarter" ~ ACCOUNTING_STANDARD) +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(x = "Operating income",
+       y = "Loan loss provisions",
+       caption = "All values in log.",
+       color = "Quarter",
+       shape = "G-SIB?")
+
 ggsave("slide 05.png", slide_5_plot)
+
+write.csv(slide_5, "slide 05.csv")
 
 # slide 6: market expectations for loan loss provisions -------------------
 opt <- c("EQY_FUND_CRNCY" = currency)
@@ -398,7 +409,7 @@ agg_provision <- rbind(agg_provision,
 paste("Balanced sample of", length(unique(past_data$Bank)), "banks, of which", sum(unique(past_data$Bank) %in% toupper(GSIBs)),
       "are G-SIBs.")
 
-write.csv(agg_provision, "slide_06.csv")
+write.csv(agg_provision, "slide 06.csv")
 
 # slide 9: household expenditure by income ------------------------------------------
 
@@ -428,7 +439,7 @@ expenditure_consumer_loans <- expenditure_consumer_loans %>%
                                 filter(date_day > "2020-01-13")
 expenditure_consumer_loans <- rbind(expenditure_by_income, consumer_credit_card_loans)
 
-write.csv(expenditure_consumer_loans, "slide09.csv")
+write.csv(expenditure_consumer_loans, "slide 09.csv")
 
 # slide 10: loan growth and liquidity -------------------------------------
 
@@ -469,23 +480,23 @@ for (qtr in reg_dates) {
 }
 
 
-stargazer(q_specific_regressions_GSIBs, type = "text", column.labels = reg_dates, keep = "loan_growth", 
+stargazer(q_specific_regressions_GSIBs, type = "text", column.labels = reg_dates, keep = c("loan_growth", "Constant"), 
           notes.label = "G-SIBs only", dep.var.labels = "Deposit growth", covariate.labels = "Loan growth",
           add.lines = list(c("Jurisdiction", rep("No", 6)),
                            c("Quarterly LLP", rep("No", 6)),
                            c("Reserves-to-loan ratio", rep("No", 6))))
-stargazer(q_specific_regressions_GSIBs_aug, type = "text", column.labels = reg_dates, keep = "loan_growth",
+stargazer(q_specific_regressions_GSIBs_aug, type = "text", column.labels = reg_dates, keep = c("loan_growth", "Constant"),
           notes.label = "G-SIBs only", dep.var.labels = "Deposit growth", covariate.labels = "Loan growth",
           add.lines = list(c("Jurisdiction", rep("Yes", 6)),
                            c("Quarterly LLP", rep("Yes", 6)),
                            c("Reserves-to-loan ratio", rep("Yes", 6))))
-stargazer(q_specific_regressions, type = "text", column.labels = reg_dates, keep = "loan_growth", 
+stargazer(q_specific_regressions, type = "text", column.labels = reg_dates, keep = c("loan_growth", "Constant"), 
           notes.label = "All sampled banks", dep.var.labels = "Deposit growth", covariate.labels = "Loan growth",
           add.lines = list(c("G-SIB dummy", rep("No", 6)),
                            c("Jurisdiction", rep("No", 6)),
                            c("Quarterly LLP", rep("No", 6)),
                            c("Reserves-to-loan ratio", rep("No", 6))))
-stargazer(q_specific_regressions_aug, type = "text", column.labels = reg_dates, keep = "loan_growth", 
+stargazer(q_specific_regressions_aug, type = "text", column.labels = reg_dates, keep = c("loan_growth", "Constant"), 
           notes.label = "All sampled banks", dep.var.labels = "Deposit growth", covariate.labels = "Loan growth",
           add.lines = list(c("G-SIB dummy", rep("Yes", 6)),
                            c("Jurisdiction", rep("Yes", 6)),
