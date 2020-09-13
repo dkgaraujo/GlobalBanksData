@@ -423,7 +423,7 @@ expenditure_by_income <- expenditure %>%
 
 # In St Louis Fed's FRED, series "CCLACBW027SBOG" represents 
 # "Consumer Loans: Credit Cards and Other Revolving Plans, All Commercial Bank"
-# NOTE: measuerd in USD billions, seasonally adjusted
+# NOTE: measured in USD billions, seasonally adjusted
 
 consumer_credit_card_loans <- get_fred_series("CCLACBW027SBOG", "credit_card_consumer_loans",
                                               observation_start = "2020-01-01")
