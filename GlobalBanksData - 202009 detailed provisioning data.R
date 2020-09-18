@@ -1,14 +1,6 @@
 
 # Introduction ------------------------------------------------------------
 
-# This code reproduces analyses of the situation of the global
-# banking system during the Covid-19 pandemic, with a focus on
-# developments in credit risk and in banks' liquidity and capital
-# position. There is no liability towards this code and no guarantee
-# is offered. In particular, please bear in mind that the results might
-# change depending on the availability of bank earnings disclosures, 
-# since the code dynamically gets data from Bloomberg.
-#
 # Note: to run this code, the user needs an open Bloomberg session.
 #
 # Author: Douglas Araujo, Basel Committee Secretariat, BIS (Basel, Switzerland)
@@ -140,10 +132,7 @@ sample_banks <- c("JPM US Equity",
                   "ADCB UH Equity",
                   "8355 JP Equity")
 
-
-
-
-# Gets the detailed provision data by bank --------------------------------
+# Gets the detailed loan loss provision data by bank --------------------------------
 
 detailed_provision_data <- tibble(banks = sample_banks) %>% 
   mutate(LoanLossProvision_byProduct = banks %>% map(~ bds(security = .x,
@@ -162,8 +151,44 @@ detailed_provision_by_product <- detailed_provision_data %>%
 detailed_provision_by_geography <- detailed_provision_data %>% 
   unnest(LoanLossProvision_byGeography)
 
+useful_info = data.frame(c("Data source: Bloomberg",
+                           "Code available at: https://github.com/dkgaraujo/GlobalBanksData/blob/master/GlobalBanksData%20-%20202009%20detailed%20provisioning%20data.R",
+                           "Periods: 'Period 5' is the most recent period for which each bank has disclosed results (as of 18 September 2020, should be related to calendar 20Q2.)",
+                           "Important note: Not all banks in the sample provided breakdown of their provisions by product or by geography. Therefore, for each period, the column sum is likely to be different."))
+
+
+loan_loss_provision_breakdown = list(detailed_provision_by_product,
+                                     detailed_provision_by_geography,
+                                     useful_info)
+# Gets the detailed loan data by bank -------------------------------------
+
+detailed_loan_data <- tibble(banks = sample_banks) %>% 
+  mutate(Loan_byProduct = banks %>% map(~ bds(security = .x,
+                                              field = "PG_TOTAL_LOANS",
+                                              overrides = c(EQY_FUND_CRNCY = "USD",
+                                                            PRODUCT_GEO_OVERRIDE = "P"))),
+         Loan_byGeography = banks %>% map(~ bds(security = .x,
+                                                field = "PG_TOTAL_LOANS",
+                                                overrides = c(EQY_FUND_CRNCY = "USD",
+                                                              PRODUCT_GEO_OVERRIDE = "G"))))
+
+
+detailed_loan_by_product <- detailed_loan_data %>% 
+  unnest(Loan_byProduct)
+
+detailed_loan_by_geography <- detailed_loan_data %>% 
+  unnest(Loan_byGeography)
+
+useful_info = data.frame(c("Data source: Bloomberg",
+                           "Code available at: https://github.com/dkgaraujo/GlobalBanksData/blob/master/GlobalBanksData%20-%20202009%20detailed%20provisioning%20data.R",
+                           "Periods: 'Period 5' is the most recent period for which each bank has disclosed results (as of 18 September 2020, should be related to calendar 20Q2.)",
+                           "Important note: Not all banks in the sample provided breakdown of their loans by product or by geography. Therefore, for each period, the column sum is likely to be different."))
+
+loan_breakdown = list(detailed_loan_by_product,
+                                     detailed_loan_by_geography,
+                                     useful_info)
 
 # Prints out the results in Excel files -----------------------------------
 
-write_xlsx(detailed_provision_by_product, "detailed_provision_by_product.xlsx")
-write_xlsx(detailed_provision_by_geography, "detailed_provision_by_geography.xlsx")
+write_xlsx(loan_loss_provision_breakdown, "loan_loss_provision_breakdown.xlsx")
+write_xlsx(loan_breakdown, "loan_breakdown")
