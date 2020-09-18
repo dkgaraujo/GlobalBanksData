@@ -191,4 +191,4 @@ loan_breakdown = list(detailed_loan_by_product,
 # Prints out the results in Excel files -----------------------------------
 
 write_xlsx(loan_loss_provision_breakdown, "loan_loss_provision_breakdown.xlsx")
-write_xlsx(loan_breakdown, "loan_breakdown")
+write_xlsx(loan_breakdown, "loan_breakdown.xlsx")
