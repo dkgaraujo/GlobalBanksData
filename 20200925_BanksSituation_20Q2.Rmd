@@ -1,0 +1,499 @@
+---
+title: "Bank credit and capital during 1st half of 2020"
+output:
+  html_document:
+    df_print: paged
+  flexdashboard::flex_dashboard:
+    storyboard: true
+  pdf_document: default
+  word_document: default
+---
+
+
+```{r Load packages, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(ggiraph)
+library(lubridate)
+library(DT)
+library(writexl)
+library(flexdashboard)
+```
+
+```{r Fetch bank tickers, message=FALSE, warning=FALSE, include=FALSE}
+source("https://github.com/dkgaraujo/GlobalBanksData/raw/master/bank_tickers_bigger_sample.R")
+source("https://github.com/dkgaraujo/GlobalBanksData/raw/master/bank_tickers_GSIBs.R")
+source("BISlike_graph_theme.R")
+```
+
+```{r Custom function to work with off-calendar fiscal dates in Bloomberg, include=FALSE}
+DateQuarter <- function(date_to_convert) {
+  calendar_year <- ifelse(month(date_to_convert) != 1, year(date_to_convert), year(date_to_convert) - 1)
+  calendar_quarter <- ifelse(month(date_to_convert) %in% c(3, 4), "Q1",
+                             ifelse(month(date_to_convert) %in% c(6, 7), "Q2",
+                                    ifelse(month(date_to_convert) %in% c(9, 10), "Q3", "Q4")))
+  datequarter <- paste(calendar_year, calendar_quarter, sep = "")
+  return(datequarter)
+}
+```
+
+### Configuration of the query to Bloomberg
+
+```{r Currency, include=FALSE}
+currency <- "USD"
+```
+
+All the monetary information throughout the script is downloaded in millions od `r currency`. The best options are either "USD" or "EUR".
+
+
+The variables below are the fields to be retrieved from Bloomberg for each bank:
+```{r Information to be retrieved from Bloomberg, echo=FALSE}
+bank_variables <- c("IS_PROV_FOR_LOAN_LOSS",
+                    "BS_TOT_LOAN",
+                    "BS_TOT_ASSET",
+                    "BS_LOAN_MTG",
+                    "BS_RSRV_LOAN_LOSS",
+                    "IS_OPER_INC",
+                    "EARN_FOR_COMMON",
+                    "BS_CUSTOMER_DEPOSITS",
+                    "BS_LEV_RATIO_TO_TANG_CAP",
+                    "BS_TIER1_COM_EQUITY_RATIO",
+                    "BS_TIER1_CAP_RATIO",
+                    "BS_TOT_CAP_TO_RISK_BASE_CAP",
+                    "BS_RISK_WEIGHTED_ASSETS")
+knitr::kable(bank_variables,
+             col.names = "Bank variables")
+```
+
+
+
+```{r Time series for each bank, message=FALSE, warning=FALSE, include=FALSE}
+if("BankTimeSeriesBloomberg.RDS" %in% list.files()) {
+  bank_data <- readRDS("BankTimeSeriesBloomberg.RDS")
+} else {
+  library(Rblpapi)
+  con <- blpConnect()
+  
+  opt <- c("currency" = currency)
+  bank_data <- bdh(securities = sample_banks,
+                   fields = bank_variables,
+                   start.date = as.Date("2017-01-01"),
+                   options = opt)
+  bank_data <- bind_rows(bank_data, .id = "BANK") %>% 
+  mutate(QTR_PROVISIONS_TOT_LOAN_RATIO = IS_PROV_FOR_LOAN_LOSS / BS_TOT_LOAN,
+         LOAN_LOSS_RESERVES_TOT_LOAN_RATIO = BS_RSRV_LOAN_LOSS / BS_TOT_LOAN,
+         QUARTER = DateQuarter(date)) %>% 
+  group_by(BANK) %>% 
+  nest() %>% 
+  mutate(BANK = toupper(BANK))
+  saveRDS(object = bank_data, file = "BankTimeSeriesBloomberg.RDS")
+}
+```
+
+
+```{r Bank level variables, message=FALSE, warning=FALSE, include=FALSE}
+if("BankInfoBloomberg.RDS" %in% list.files()) {
+  bank_info <- readRDS("BankInfoBloomberg.RDS")
+} else {
+  library(Rblpapi)
+  con <- blpConnect()
+
+  bank_info <- bdp(securities = sample_banks,
+                      fields = c("SHORT_NAME",
+                                 "CNTRY_OF_RISK",
+                                 "ACCOUNTING_STANDARD")) %>% 
+  cbind(BANK = toupper(rownames(.)))
+  saveRDS(object = bank_info, file = "BankInfoBloomberg.RDS")
+}
+```
+
+```{r Merges time series and constant bank-level information in same dataset, message=FALSE, warning=FALSE, include=FALSE}
+bank_data <- bank_data %>% left_join(bank_info, by = "BANK")
+bank_data <- bank_data %>% 
+  mutate(GSIB = BANK %in% GSIBs)
+```
+
+```{r Adjustments to some variables, message=FALSE, warning=FALSE, include=FALSE}
+bank_data <- bank_data %>% 
+  mutate(CNTRY_OF_RISK = ifelse(CNTRY_OF_RISK %in% c("SE",
+                                                     "ES",
+                                                     "DE",
+                                                     "NL",
+                                                     "IT",
+                                                     "FR",
+                                                     "FI",
+                                                     "BE",
+                                                     "AT",
+                                                     "DK"),
+                                "EU", 
+                                CNTRY_OF_RISK),
+         ACCOUNTING_STANDARD = ifelse(ACCOUNTING_STANDARD %in% c("IAS/IFRS", "US GAAP"),
+                                      ACCOUNTING_STANDARD,
+                                      "National GAAP"))
+
+```
+
+### Information on sample banks
+
+The sample contains `r nrow(bank_data)` banks, of which `r sum(bank_data$GSIB)` are G-SIBs. Below are the list of banks in the sample. In the next section, graphs and tables using data from these banks help understand provisioning behaviour during the pandemic crisis.
+
+```{r echo=FALSE}
+bank_data %>% 
+  select(-data) %>% 
+      datatable(filter = 'top', 
+            rownames = FALSE,
+            extensions = 'Buttons', 
+            options = list(
+              dom = 'Bfrtip',
+              searchHighlight = TRUE,
+              pageLength = 15,
+              buttons = c('csv', 'excel')
+      )
+  ) 
+```
+
+
+### Time series of provisions
+
+#### By geography
+
+```{r include=FALSE}
+data_graph_total_prov_geogr <- bank_data %>% 
+  unnest(data) %>% 
+  group_by(CNTRY_OF_RISK, QUARTER) %>% 
+  summarise(total_prov = sum(IS_PROV_FOR_LOAN_LOSS, na.rm = TRUE)) %>% 
+  mutate(GEOGRAPHY = ifelse(CNTRY_OF_RISK %in% c("US", "CA", "BR"),
+                            "Americas",
+                            ifelse(CNTRY_OF_RISK %in% c("NO", "GB", "CH", "EU", "AE", "IL", "RU", "SA", "QA"),
+                                   "Europe/MENA",
+                                   "Asia"))) %>% 
+  group_by(GEOGRAPHY, QUARTER) %>% 
+  summarise(total_prov = sum(total_prov, na.rm = TRUE)) %>% 
+  filter(as.numeric(substr(QUARTER, 1, 4)) > 2016)
+
+graph_total_prov_geogr <- data_graph_total_prov_geogr %>% 
+  ggplot(aes(x = QUARTER, y = total_prov, fill = GEOGRAPHY)) +
+  geom_bar(position = "stack", stat = "identity") +
+  scale_fill_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  ylim(0, NA) +
+  labs(title = "Provisions built during quarter",
+       caption = "Does not consider Day 1 impact of CECL adoption for US GAAP banks",
+       x = element_blank(),
+       y = "USD mln",
+       fill = "Geography") +
+  theme(axis.text.x = element_text(size = rel(0.5))) +
+  BISlike_graph_theme()
+```
+
+```{r Graph by geography, echo=FALSE}
+graph_total_prov_geogr
+```
+
+
+#### By accounting standard
+
+```{r include=FALSE}
+data_graph_total_prov_acct <- bank_data %>% 
+  unnest(data) %>% 
+  group_by(ACCOUNTING_STANDARD, QUARTER) %>% 
+  summarise(total_prov = sum(IS_PROV_FOR_LOAN_LOSS, na.rm = TRUE)) %>% 
+  filter(as.numeric(substr(QUARTER, 1, 4)) > 2016)
+
+graph_total_prov_acct <- data_graph_total_prov_acct %>% 
+  ggplot(aes(x = QUARTER, y = total_prov, fill = ACCOUNTING_STANDARD)) +
+  geom_bar(position = "stack", stat = "identity") +
+  scale_fill_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  ylim(0, NA) +
+  labs(title = "Provisions built during quarter",
+       caption = "Does not consider Day 1 impact of CECL adoption for US GAAP banks",
+       x = element_blank(),
+       y = "USD mln",
+       fill = "Accounting standard") +
+  theme(axis.text.x = element_text(size = rel(0.8))) +
+  BISlike_graph_theme()
+```
+
+```{r Graph by accounting standard, echo=FALSE}
+graph_total_prov_acct
+```
+
+### Loan loss provisions, stock and flow
+The graph also includes the average quarterly loan loss provision build-up (flow) at the jurisdiction level.
+
+#### Total stock of loan loss reserves as a percentage of total loans
+
+
+```{r Data on Total Loan Loss Reserves as Percentage of Total Loans by Jurisdiction G-SIB, message=FALSE, warning=FALSE, include=FALSE}
+data_graph_reserves_pct_loans_GSIBs <- bank_data %>% 
+  filter(GSIB == TRUE) %>% 
+  unnest(data) %>% 
+  filter(QUARTER %in% c("2019Q4", "2020Q1", "2020Q2")) %>% 
+  select(BANK, CNTRY_OF_RISK, SHORT_NAME, QUARTER, LOAN_LOSS_RESERVES_TOT_LOAN_RATIO, QTR_PROVISIONS_TOT_LOAN_RATIO) %>% 
+  arrange(CNTRY_OF_RISK, BANK, SHORT_NAME, QUARTER)
+
+data_graph_reserves_pct_loans_jurisd_avgs_GSIBs <- data_graph_reserves_pct_loans_GSIBs %>% 
+  group_by(CNTRY_OF_RISK, QUARTER) %>% 
+  summarise(mean_quarterly_provisions = mean(100 *QTR_PROVISIONS_TOT_LOAN_RATIO ))
+
+write_xlsx(list(data_graph_reserves_pct_loans_GSIBs,
+                data_graph_reserves_pct_loans_jurisd_avgs_GSIBs),
+          "output/LoanLossReservesPctTotalLoans_GSIBs.xlsx")
+```
+
+#### Graph
+
+```{r Graph of Total Loan Loss Reserves as Percentage of Total Loans by Jurisdiction G-SIB, message=FALSE, warning=FALSE, include=FALSE}
+graph_reserves_pct_loans_GSIBs <- data_graph_reserves_pct_loans_GSIBs %>% 
+  ggplot(aes(x = BANK, y = 100 * LOAN_LOSS_RESERVES_TOT_LOAN_RATIO, fill = QUARTER)) +
+  geom_bar(position = position_dodge(), stat = "identity") +
+  labs(title = "G-SIBs: total loan loss reserves as % of total loans",
+       x = element_blank(),
+       y = "% of total loans",
+       color = "Quarter") +
+  coord_flip() +
+  scale_fill_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  BISlike_graph_theme()
+```
+
+```{r echo=FALSE}
+graph_reserves_pct_loans_GSIBs
+```
+
+
+#### Stock of loan loss provisions by bank (G-SIBs only)
+The following table contains the data for the graph above. You can download the raw data behind the chart.
+
+```{r Data on banks stock of reserves at each quarter, echo=FALSE}
+data_graph_reserves_pct_loans_GSIBs %>% 
+  datatable(filter = 'top', 
+            rownames = FALSE,
+            extensions = 'Buttons', 
+            options = list(
+              dom = 'Bfrtip',
+              searchHighlight = TRUE,
+              pageLength = 15,
+              buttons = c('csv', 'excel')
+      )
+  ) %>% 
+  formatRound(columns = c("LOAN_LOSS_RESERVES_TOT_LOAN_RATIO", "QTR_PROVISIONS_TOT_LOAN_RATIO"), digits = 4)
+```
+
+#### Average quarterly flow of loan loss provisions by jurisdiction
+And here you can see the country average for the quarterly build-up of provisions:
+
+```{r Data on jurisdiction average quarterly reserve build, echo=FALSE}
+data_graph_reserves_pct_loans_jurisd_avgs_GSIBs %>% 
+  datatable(filter = 'top',
+            rownames = FALSE,
+            extensions = 'Buttons', 
+            options = list(
+              dom = 'Bfrtip',
+              searchHighlight = TRUE,
+              pageLength = 15,
+              buttons = c('csv', 'excel')
+      )) %>% 
+  formatRound(columns = "mean_quarterly_provisions", digits = 4)
+```
+
+
+```{r Total Loan Loss Reserves as Percentage of Total Loans by Jurisdiction All Banks, eval=FALSE, include=FALSE}
+data_graph_reserves_pct_loans_SampleBanks <- bank_data %>% 
+  unnest(data) %>% 
+  filter(QUARTER %in% c("2019Q4", "2020Q1", "2020Q2")) %>% 
+  select(BANK, CNTRY_OF_RISK, SHORT_NAME, QUARTER, LOAN_LOSS_RESERVES_TOT_LOAN_RATIO, QTR_PROVISIONS_TOT_LOAN_RATIO) %>% 
+  arrange(CNTRY_OF_RISK, BANK, SHORT_NAME, QUARTER)
+
+data_graph_reserves_pct_loans_jurisd_avgs_SampleBanks <- data_graph_reserves_pct_loans_SampleBanks %>% 
+  group_by(CNTRY_OF_RISK, QUARTER) %>% 
+  summarise(mean_quarterly_provisions = mean(100 *QTR_PROVISIONS_TOT_LOAN_RATIO ))
+
+write_xlsx(list(data_graph_reserves_pct_loans_SampleBanks,
+                data_graph_reserves_pct_loans_jurisd_avgs_SampleBanks),
+           "LoanLossReservesPctTotalLoans_SampleBanks.xlsx")
+
+data_graph_reserves_pct_loans_SampleBanks %>% 
+  ggplot(aes(x = BANK, y = 100 * LOAN_LOSS_RESERVES_TOT_LOAN_RATIO, fill = QUARTER)) +
+  geom_bar(position = "dodge", stat = "identity") +
+  labs(title = "All sample banks: total loan loss reserves as % of total loans",
+       subtitle = "{closest_state}",
+       x = element_blank(),
+       y = "% of total loans",
+       color = "Quarter") +
+  theme(axis.text.x = element_text(size = rel(0.3))) +
+  coord_flip() +
+  scale_color_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) 
+```
+
+### Dispersion of provisioning practices
+
+
+```{r Data for dispersion of provisioning, warning=FALSE, message=FALSE, include=FALSE}
+data_graph_dispersion_SampleBanks <- bank_data %>% 
+  unnest(data) %>% 
+  filter(substr(QUARTER, 1, 4) %in% c("2019", "2020")) %>% 
+  select(BANK, QUARTER, ACCOUNTING_STANDARD, QTR_PROVISIONS_TOT_LOAN_RATIO)
+```
+
+#### Graph with all sample banks
+The chart below includes all `r length(unique(data_graph_dispersion_SampleBanks$BANK))` banks.
+
+```{r Dispersion of provisioning, message=FALSE, warning=FALSE, include=FALSE}
+graph_dispersion_SampleBanks <- data_graph_dispersion_SampleBanks %>% 
+  ggplot(aes(x = 100 * QTR_PROVISIONS_TOT_LOAN_RATIO,
+             color = substr(QUARTER, 1, 4),
+             group = QUARTER)) +
+  geom_density(size = 1.2, 
+               alpha = 0.8, 
+               position = "identity", 
+               aes(linetype = substr(QUARTER, 5, 6))) +
+  scale_color_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  labs(title = "Dispersion of provisioning practices",
+       subtitle = paste("Sample of", length(unique(data_graph_dispersion_SampleBanks$BANK)), "large global banks"),
+       x = "Quarterly loan loss provisions as % of total loans",
+       y = "Density",
+       color = "Year",
+       linetype = "Quarter")+
+  BISlike_graph_theme()
+```
+
+```{r echo=FALSE, warning=FALSE}
+graph_dispersion_SampleBanks
+```
+
+
+#### By accounting standard
+In contrast, the following chart uses the same banks, but they are plotted separately according to their accounting standard.
+
+```{r Dispersion of provisioning by accounting standard, message=FALSE, warning=FALSE, include=FALSE}
+graph_dispersion_SampleBanks_acct <- data_graph_dispersion_SampleBanks %>% 
+  ggplot(aes(x = 100 * QTR_PROVISIONS_TOT_LOAN_RATIO,
+             color = substr(QUARTER, 1, 4),
+             group = QUARTER)) +
+  geom_density(size = 1.2, 
+               alpha = 0.8, 
+               position = "identity", 
+               aes(linetype = substr(QUARTER, 5, 6))) +
+  scale_color_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  facet_wrap(~ ACCOUNTING_STANDARD, dir = "v") +
+  labs(title = "Dispersion of provisioning practices",
+       subtitle = paste("Sample of", length(unique(data_graph_dispersion_SampleBanks$BANK)), "large global banks"),
+       x = "Quarterly loan loss provisions as % of total loans",
+       y = "Density",
+       color = "Year",
+       linetype = "Quarter")+
+  BISlike_graph_theme()
+```
+
+```{r echo=FALSE, warning=FALSE}
+graph_dispersion_SampleBanks_acct
+```
+
+
+### Provisioning practices and other bank characteristics
+
+This section explores the relationship of provisioning behaviour with bank characteristics such as their profitability, capital level, and RWA density.
+
+```{r include=FALSE}
+data_graph_prov_bank_char <- bank_data %>% 
+  unnest(data) %>% 
+  filter(QUARTER %in% c("2019Q4", "2020Q1", "2020Q2"))
+```
+
+#### Provisioning and profitability
+
+Profitability measured by operating income.
+
+```{r Provisioning and profitability, include=FALSE, warning=FALSE}
+graph_prov_bank_char_profit <- data_graph_prov_bank_char %>% 
+  ggplot(aes(x = 100 * IS_OPER_INC / BS_TOT_LOAN, # BS_TOT_ASSET
+             y = 100 * IS_PROV_FOR_LOAN_LOSS / BS_TOT_LOAN, # BS_TOT_ASSET
+             group = QUARTER,
+             color = QUARTER,
+             shape = GSIB)) + 
+  geom_point_interactive(aes(tooltip = SHORT_NAME, data_id = SHORT_NAME)) +
+  theme(panel.background = element_rect(fill = "#d3d6d4"),
+        strip.background = element_rect(fill = "white"),
+        panel.grid.major = element_line(color = "#f2f2f2"),
+        strip.text.y = element_blank()) +
+  scale_color_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  facet_grid( ~ ACCOUNTING_STANDARD, scales = "free_x") +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(x = "Operating income (%)",
+       y = "Loan loss provision (%)",
+       caption = "All values divided by total loans", # Assets!!!
+       color = "Quarter",
+       shape = "G-SIB")+
+  BISlike_graph_theme()
+```
+
+```{r echo=FALSE, warning=FALSE}
+girafe(ggobj = graph_prov_bank_char_profit,
+       fonts = list(sans = "Segoe UI"))
+```
+
+
+#### Provisioning and capital
+
+Capital measured by CET1 ratio.
+
+```{r Provisioning and capital, include=FALSE, warning=FALSE}
+graph_prov_bank_char_capital <- data_graph_prov_bank_char %>% 
+  ggplot(aes(x = BS_TIER1_COM_EQUITY_RATIO, 
+             y = 100 * IS_PROV_FOR_LOAN_LOSS / BS_TOT_LOAN, # BS_TOT_ASSET
+             group = QUARTER,
+             color = QUARTER,
+             shape = GSIB)) + 
+  geom_point_interactive(aes(tooltip = SHORT_NAME, data_id = SHORT_NAME)) +
+  theme(panel.background = element_rect(fill = "#d3d6d4"),
+        strip.background = element_rect(fill = "white"),
+        panel.grid.major = element_line(color = "#f2f2f2"),
+        strip.text.y = element_blank()) +
+  scale_color_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  facet_grid( ~ ACCOUNTING_STANDARD) +
+  ylim(-0.5, NA) +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(x = "CET1 ratio",
+       y = "Loan loss provision",
+       caption = "All values divided by total loans", # Assets!!!
+       color = "Quarter",
+       shape = "G-SIB") +
+  BISlike_graph_theme()
+```
+
+```{r echo=FALSE, warning=FALSE}
+girafe(ggobj = graph_prov_bank_char_capital,
+       fonts = list(sans = "Segoe UI"))
+```
+
+
+#### Provisioning and bank exposure to risk
+
+Exposure to risk measured by RWA density.
+
+```{r Provisioning and RWA density, include=FALSE, warning=FALSE}
+graph_prov_bank_char_risk <- data_graph_prov_bank_char %>% 
+  ggplot(aes(x = 100 * BS_RISK_WEIGHTED_ASSETS / BS_TOT_ASSET, 
+             y = 100 * IS_PROV_FOR_LOAN_LOSS / BS_TOT_ASSET,
+             group = QUARTER,
+             color = QUARTER,
+             shape = GSIB)) + 
+  geom_point_interactive(aes(tooltip = SHORT_NAME, data_id = SHORT_NAME)) +
+  theme(panel.background = element_rect(fill = "#d3d6d4"),
+        strip.background = element_rect(fill = "white"),
+        panel.grid.major = element_line(color = "#f2f2f2"),
+        strip.text.y = element_blank()) +
+  scale_color_manual(values = c("#C28191", "#6CADE1", "#FFEC72")) +
+  facet_grid( ~ ACCOUNTING_STANDARD, scales = "free_x") +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(x = "RWA density",
+       y = "Loan loss provision",
+       caption = "RWA density: RWA divided by total assets", 
+       color = "Quarter",
+       shape = "G-SIB") +
+  BISlike_graph_theme()
+```
+
+```{r echo=FALSE, warning=FALSE}
+girafe(ggobj = graph_prov_bank_char_risk,
+       fonts = list(sans = "Segoe UI"))
+```
+
