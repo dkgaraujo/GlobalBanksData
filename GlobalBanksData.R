@@ -10,8 +10,6 @@
 # since the code dynamically gets data from Bloomberg.
 #
 # Note: to run this code, the user needs an open Bloomberg session.
-#
-# Author: Douglas Araujo, Basel Committee Secretariat, BIS (Basel, Switzerland)
 
 # Packages ----------------------------------------------------------------
 library(Rblpapi)
